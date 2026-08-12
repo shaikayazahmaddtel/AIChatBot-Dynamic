@@ -1,71 +1,106 @@
-"""
-Multi-Client Management System
-"""
+"""Multi-client / tenant management for the centralized chatbot platform."""
 import json
+import os
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+
 import redis
+
+
+def normalize_domain(value: str) -> str:
+    if not value:
+        return ""
+    candidate = value.strip()
+    if not candidate.startswith(("http://", "https://")):
+        candidate = f"https://{candidate}"
+    hostname = (urlparse(candidate).hostname or "").lower().strip(".")
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname
+
 
 class ClientManager:
     def __init__(self, redis_client: redis.Redis = None):
-        self.clients = {}
-        self.redis = redis_client or redis.from_url('redis://localhost:6379')
-    
+        self.redis = redis_client or redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+
     def register_client(self, client_data: Dict) -> Dict:
-        """Register a new client"""
+        """Register a customer and index its website domain."""
+        required = ["name", "industry", "website_url"]
+        missing = [field for field in required if not client_data.get(field)]
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
         client_id = str(uuid.uuid4())
         api_key = f"sk-{uuid.uuid4().hex}"
-        
+        domain = normalize_domain(client_data["website_url"])
+        if not domain:
+            raise ValueError("website_url must contain a valid domain")
+
         client = {
-            'client_id': client_id,
-            'name': client_data['name'],
-            'industry': client_data['industry'],
-            'website_url': client_data['website_url'],
-            'api_key': api_key,
-            'openai_api_key': client_data.get('openai_api_key'),
-            'plan': client_data.get('plan', 'basic'),
-            'max_tokens_per_day': client_data.get('max_tokens_per_day', 100000),
-            'status': 'active',
-            'created_at': datetime.now().isoformat()
+            "client_id": client_id,
+            "name": client_data["name"],
+            "industry": client_data["industry"],
+            "website_url": client_data["website_url"],
+            "domain": domain,
+            "api_key": api_key,
+            "openai_api_key": client_data.get("openai_api_key"),
+            "openai_model": client_data.get("openai_model"),
+            "plan": client_data.get("plan", "basic"),
+            "max_tokens_per_day": client_data.get("max_tokens_per_day", 100000),
+            "status": "active",
+            "created_at": datetime.now().isoformat(),
         }
-        
-        # Store in Redis
-        self.redis.setex(
-            f"client:{client_id}",
-            timedelta(days=365),
-            json.dumps(client)
-        )
-        
+
+        ttl = timedelta(days=365)
+        self.redis.setex(f"client:{client_id}", ttl, json.dumps(client))
+        self.redis.setex(f"client_domain:{domain}", ttl, client_id)
+
         return {
-            'client_id': client_id,
-            'api_key': api_key,
-            'embed_code': self.generate_embed_code(client_id)
+            "client_id": client_id,
+            "api_key": api_key,
+            "embed_code": self.generate_embed_code(client_id),
         }
-    
+
     def get_client(self, client_id: str) -> Optional[Dict]:
-        """Get client by ID"""
         data = self.redis.get(f"client:{client_id}")
-        if data:
-            return json.loads(data)
+        if not data:
+            return None
+        return json.loads(data)
+
+    def get_client_by_domain(self, domain: str) -> Optional[Dict]:
+        """Resolve a tenant from its registered domain, including legacy clients."""
+        normalized = normalize_domain(domain)
+        client_id = self.redis.get(f"client_domain:{normalized}")
+        if client_id:
+            return self.get_client(client_id)
+
+        # Backward-compatible lookup for tenants registered before domain indexing existed.
+        for key in self.redis.scan_iter(match="client:*"):
+            client = self.get_client(key.split(":", 1)[1])
+            if client and normalize_domain(client.get("website_url", "")) == normalized:
+                self.redis.setex(f"client_domain:{normalized}", timedelta(days=365), client["client_id"])
+                return client
         return None
-    
+
     def validate_client(self, client_id: str, api_key: str) -> bool:
-        """Validate client credentials"""
         client = self.get_client(client_id)
-        return client and client['api_key'] == api_key
-    
+        return bool(client and client.get("api_key") == api_key and client.get("status") == "active")
+
     def generate_embed_code(self, client_id: str) -> str:
-        """Generate JavaScript embed code"""
-        return f'''
-<!-- AI Chatbot Widget -->
+        sdk_url = os.getenv(
+            "WIDGET_SDK_URL",
+            "https://chatbot.midget.jsscript/static/js/dynamic-ai.js",
+        )
+        return f'''<!-- Dynamic AI Chatbot -->
+<script src="{sdk_url}"></script>
 <script>
-(function() {{
-    var script = document.createElement('script');
-    script.src = 'http://localhost:5000/static/js/chatbot-widget.js';
-    script.setAttribute('data-client-id', '{client_id}');
-    script.async = true;
-    document.head.appendChild(script);
-}})();
+  DynamicAI.init({{
+    customerId: "{client_id}"
+  }});
 </script>
 '''
