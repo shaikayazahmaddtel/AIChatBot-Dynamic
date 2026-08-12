@@ -1,5 +1,6 @@
 """Multi-client / tenant management for the centralized chatbot platform."""
 import json
+import os
 import uuid
 from typing import Dict, Optional
 from datetime import datetime, timedelta
@@ -9,7 +10,6 @@ import redis
 
 
 def normalize_domain(value: str) -> str:
-    """Return a normalized hostname for tenant-domain lookups."""
     if not value:
         return ""
     candidate = value.strip()
@@ -24,7 +24,7 @@ def normalize_domain(value: str) -> str:
 class ClientManager:
     def __init__(self, redis_client: redis.Redis = None):
         self.redis = redis_client or redis.from_url(
-            "redis://localhost:6379",
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             decode_responses=True,
         )
 
@@ -49,6 +49,7 @@ class ClientManager:
             "domain": domain,
             "api_key": api_key,
             "openai_api_key": client_data.get("openai_api_key"),
+            "openai_model": client_data.get("openai_model"),
             "plan": client_data.get("plan", "basic"),
             "max_tokens_per_day": client_data.get("max_tokens_per_day", 100000),
             "status": "active",
@@ -80,8 +81,7 @@ class ClientManager:
         return bool(client and client.get("api_key") == api_key and client.get("status") == "active")
 
     def generate_embed_code(self, client_id: str) -> str:
-        """Generate the centralized production widget snippet."""
-        sdk_url = "https://chatbot.midget.jsscript/dynamic-ai.js"
+        sdk_url = os.getenv("WIDGET_SDK_URL", "https://chatbot.midget.jsscript/static/js/dynamic-ai.js")
         return f'''<!-- Dynamic AI Chatbot -->
 <script src="{sdk_url}"></script>
 <script>
