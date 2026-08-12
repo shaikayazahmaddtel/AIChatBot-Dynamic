@@ -1,6 +1,6 @@
 """Tenant-scoped vector store management."""
 import os
-from typing import List
+from typing import List, Tuple
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -42,6 +42,14 @@ class VectorStoreManager:
             self.load_vector_store()
         if self.vector_store:
             return self.vector_store.similarity_search(query, k=k)
+        return []
+
+    def similarity_search_with_score(self, query: str, k: int = 5) -> List[Tuple[object, float]]:
+        """Return documents with FAISS distance scores for answerability decisions."""
+        if not self.vector_store:
+            self.load_vector_store()
+        if self.vector_store:
+            return self.vector_store.similarity_search_with_score(query, k=k)
         return []
 
     def save_vector_store(self) -> None:
