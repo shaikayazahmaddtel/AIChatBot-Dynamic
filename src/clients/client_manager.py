@@ -73,15 +73,29 @@ class ClientManager:
         return json.loads(data)
 
     def get_client_by_domain(self, domain: str) -> Optional[Dict]:
-        client_id = self.redis.get(f"client_domain:{normalize_domain(domain)}")
-        return self.get_client(client_id) if client_id else None
+        """Resolve a tenant from its registered domain, including legacy clients."""
+        normalized = normalize_domain(domain)
+        client_id = self.redis.get(f"client_domain:{normalized}")
+        if client_id:
+            return self.get_client(client_id)
+
+        # Backward-compatible lookup for tenants registered before domain indexing existed.
+        for key in self.redis.scan_iter(match="client:*"):
+            client = self.get_client(key.split(":", 1)[1])
+            if client and normalize_domain(client.get("website_url", "")) == normalized:
+                self.redis.setex(f"client_domain:{normalized}", timedelta(days=365), client["client_id"])
+                return client
+        return None
 
     def validate_client(self, client_id: str, api_key: str) -> bool:
         client = self.get_client(client_id)
         return bool(client and client.get("api_key") == api_key and client.get("status") == "active")
 
     def generate_embed_code(self, client_id: str) -> str:
-        sdk_url = os.getenv("WIDGET_SDK_URL", "https://chatbot.midget.jsscript/static/js/dynamic-ai.js")
+        sdk_url = os.getenv(
+            "WIDGET_SDK_URL",
+            "https://chatbot.midget.jsscript/static/js/dynamic-ai.js",
+        )
         return f'''<!-- Dynamic AI Chatbot -->
 <script src="{sdk_url}"></script>
 <script>
