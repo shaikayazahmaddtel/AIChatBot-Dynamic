@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI Assistant</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #fff; color: #111827; }
+    .header { display:flex; justify-content:space-between; align-items:center; padding:16px; background:#2563eb; color:#fff; }
+    .title { font-weight:700; }
+    .messages { height: 490px; overflow:auto; padding:16px; background:#f8fafc; }
+    .message { max-width: 85%; padding:10px 12px; margin:8px 0; border-radius:12px; line-height:1.4; white-space:pre-wrap; }
+    .user { margin-left:auto; background:#2563eb; color:#fff; }
+    .assistant { background:#e5e7eb; color:#111827; }
+    .composer { display:flex; gap:8px; padding:12px; border-top:1px solid #e5e7eb; }
+    textarea { flex:1; resize:none; min-height:42px; border:1px solid #d1d5db; border-radius:10px; padding:10px; }
+    button { border:0; border-radius:10px; padding:10px 14px; background:#2563eb; color:#fff; cursor:pointer; }
+    .meta { padding:4px 16px 10px; font-size:11px; color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">AI Assistant</div>
+    <button id="close" style="background:transparent;font-size:18px;padding:4px 8px">×</button>
+  </div>
+  <div id="messages" class="messages"></div>
+  <div class="meta" id="source"></div>
+  <div class="composer">
+    <textarea id="input" placeholder="Ask a question..."></textarea>
+    <button id="send">Send</button>
+  </div>
+<script>
+(function () {
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get("token");
+  var apiBase = window.location.origin;
+  var sessionId = null;
+  var messages = document.getElementById("messages");
+
+  function addMessage(role, text) {
+    var node = document.createElement("div");
+    node.className = "message " + role;
+    node.textContent = text;
+    messages.appendChild(node);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  async function sendMessage() {
+    var input = document.getElementById("input");
+    var message = input.value.trim();
+    if (!message || !token) return;
+    input.value = "";
+    addMessage("user", message);
+
+    try {
+      var response = await fetch(apiBase + "/api/v1/chatbot/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + token
+        },
+        body: JSON.stringify({ session_id: sessionId, message: message })
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Request failed");
+      sessionId = payload.session_id;
+      addMessage("assistant", payload.answer || payload.response || "No response available.");
+      document.getElementById("source").textContent = payload.answer_type === "website"
+        ? "Based on customer website information"
+        : payload.answer_type === "general"
+          ? "General information"
+          : "";
+    } catch (error) {
+      addMessage("assistant", "Unable to process your request right now.");
+      console.error(error);
+    }
+  }
+
+  document.getElementById("send").addEventListener("click", sendMessage);
+  document.getElementById("input").addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+  document.getElementById("close").addEventListener("click", function () {
+    window.parent.postMessage({ type: "DYNAMIC_AI_CLOSE" }, "*");
+  });
+  addMessage("assistant", "Hello! How can I help you today?");
+})();
+</script>
+</body>
+</html>
