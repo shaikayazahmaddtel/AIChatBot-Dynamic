@@ -41,6 +41,14 @@ class ChatbotEngine:
     def get_industry_prompt(self) -> str:
         return INDUSTRY_PROMPTS.get(self.industry, INDUSTRY_PROMPTS["general"])
 
+    def get_customer_context(self) -> Dict[str, Any]:
+        return {
+            "name": self.config.get("name"),
+            "industry": self.config.get("industry"),
+            "website_url": self.config.get("website_url"),
+            "domain": self.config.get("domain"),
+        }
+
     def _history_text(self, session: Dict[str, Any]) -> str:
         recent = session["messages"][-10:]
         return "\n".join(f"{item['role']}: {item['content']}" for item in recent)
@@ -62,7 +70,10 @@ class ChatbotEngine:
                 }
 
             session = self.conversation_stores[session_id]
-            relevant_docs = self.vector_store_manager.similarity_search(message, k=3)
+            scored_docs = self.vector_store_manager.similarity_search_with_score(message, k=5)
+            relevance_threshold = float(os.getenv("RAG_DISTANCE_THRESHOLD", "1.25"))
+            relevant_pairs = [pair for pair in scored_docs if pair[1] <= relevance_threshold]
+            relevant_docs = [doc for doc, _score in relevant_pairs[:3]]
             context_str = "\n\n".join(doc.page_content for doc in relevant_docs)
             history_str = self._history_text(session)
 
@@ -72,29 +83,36 @@ class ChatbotEngine:
                 openai_api_key=self.openai_api_key,
             )
 
+            customer = self.get_customer_context()
             system_prompt = self.get_industry_prompt()
             if relevant_docs:
                 answer_type = "website"
                 instruction = (
-                    "Answer using the website context when it contains the requested information. "
-                    "Do not invent organization-specific facts. If the website context does not answer "
-                    "the question, state that the website does not contain the information and then "
-                    "provide a clearly labeled general-knowledge answer."
+                    "Use the website context as the authoritative source for organization-specific facts. "
+                    "Answer the visitor directly and naturally. Do not invent names, prices, courses, "
+                    "services, contact details, dates, policies, or other customer-specific facts. "
+                    "If the requested fact is not actually present in the website context, say that the "
+                    "website does not contain that information and then give a clearly labeled general answer."
                 )
             else:
                 answer_type = "general"
                 instruction = (
-                    "The website knowledge base did not return relevant information. Clearly tell the "
-                    "visitor that the website does not contain the requested information, then provide "
-                    "a useful general-knowledge answer without presenting it as organization-specific."
+                    "The website knowledge base did not contain sufficiently relevant information. "
+                    "Begin by clearly distinguishing that the requested organization-specific information "
+                    "was not found on the website, then answer the question using general knowledge. "
+                    "Never present general knowledge as a fact about this organization."
                 )
 
             full_prompt = f"""{system_prompt}
 
+Customer profile:
+{customer}
+
+Response rules:
 {instruction}
 
 Website context:
-{context_str or '(No relevant website content found)'}
+{context_str or '(No sufficiently relevant website content found)'}
 
 Recent conversation:
 {history_str or '(No previous messages)'}
@@ -123,7 +141,7 @@ Assistant:"""
                     {"content": doc.page_content[:300]}
                     for doc in relevant_docs
                 ],
-                "confidence": min(0.95, 0.55 + (0.1 * len(relevant_docs))) if relevant_docs else 0.35,
+                "confidence": max(0.0, min(1.0, 1.0 - (relevant_pairs[0][1] / (relevance_threshold * 2)))) if relevant_pairs else 0.25,
             }
         except Exception as exc:
             return {
