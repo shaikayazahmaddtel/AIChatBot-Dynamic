@@ -1,7 +1,6 @@
 """Centralized, tenant-aware chatbot API routes."""
 import uuid
 from typing import Dict
-from urllib.parse import urlparse
 
 from flask import Blueprint, jsonify, request, g
 
@@ -15,10 +14,13 @@ _engine_cache: Dict[str, ChatbotEngine] = {}
 
 
 def _effective_site_url(data: dict) -> str:
+    """Use the browser Origin as the tenant identity; body fallback is opt-in for development."""
     origin = request.headers.get("Origin")
-    if origin and origin not in {"null", ""}:
+    if origin and origin != "null":
         return origin
-    return data.get("website_url", "")
+    if __import__("os").getenv("WIDGET_INIT_ALLOW_BODY_URL", "false").lower() == "true":
+        return data.get("website_url", "")
+    return ""
 
 
 def _get_engine(client: dict) -> ChatbotEngine:
@@ -39,7 +41,7 @@ def initialize_widget():
         site_url = _effective_site_url(data)
 
         if not client_id or not site_url:
-            return jsonify({"error": "customerId and website origin are required"}), 400
+            return jsonify({"error": "customerId and browser Origin are required"}), 400
 
         client = tenant_resolver.client_manager.get_client(client_id)
         if not client or client.get("status") != "active":
@@ -90,11 +92,12 @@ def initialize_chatbot():
 @require_widget_token
 def chat():
     """Process a visitor question using the tenant-specific RAG engine."""
+    session_id = str(uuid.uuid4())
     try:
         data = request.get_json(silent=True) or {}
         claims = g.widget_claims
         client_id = claims.get("sub")
-        session_id = data.get("session_id") or str(uuid.uuid4())
+        session_id = data.get("session_id") or session_id
         message = (data.get("message") or "").strip()
 
         if not message:
@@ -114,7 +117,7 @@ def chat():
     except Exception:
         return jsonify({
             "error": "Unable to process the message",
-            "session_id": session_id if "session_id" in locals() else None,
+            "session_id": session_id,
         }), 500
 
 
