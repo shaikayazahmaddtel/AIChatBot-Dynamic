@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AI Assistant</title>
+  <title id="page-title">AI Assistant</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, sans-serif; background: #fff; color: #111827; }
@@ -16,12 +16,12 @@
     .composer { display:flex; gap:8px; padding:12px; border-top:1px solid #e5e7eb; }
     textarea { flex:1; resize:none; min-height:42px; border:1px solid #d1d5db; border-radius:10px; padding:10px; }
     button { border:0; border-radius:10px; padding:10px 14px; background:#2563eb; color:#fff; cursor:pointer; }
-    .meta { padding:4px 16px 10px; font-size:11px; color:#6b7280; }
+    .meta { padding:4px 16px 10px; font-size:11px; color:#6b7280; min-height:18px; }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">AI Assistant</div>
+    <div class="title" id="widget-title">AI Assistant</div>
     <button id="close" style="background:transparent;font-size:18px;padding:4px 8px">×</button>
   </div>
   <div id="messages" class="messages"></div>
@@ -37,13 +37,35 @@
   var apiBase = window.location.origin;
   var sessionId = null;
   var messages = document.getElementById("messages");
+  var profile = null;
 
   function addMessage(role, text) {
+    if (!text) return;
     var node = document.createElement("div");
     node.className = "message " + role;
     node.textContent = text;
     messages.appendChild(node);
     messages.scrollTop = messages.scrollHeight;
+  }
+
+  async function loadConfig() {
+    if (!token) return false;
+    try {
+      var response = await fetch(apiBase + "/api/v1/chatbot/widget/config", {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      var payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Widget configuration failed");
+      profile = payload;
+      document.getElementById("widget-title").textContent = payload.title || payload.name || "AI Assistant";
+      document.getElementById("page-title").textContent = payload.title || payload.name || "AI Assistant";
+      addMessage("assistant", payload.greeting);
+      return true;
+    } catch (error) {
+      console.error(error);
+      addMessage("assistant", "The chatbot is temporarily unavailable.");
+      return false;
+    }
   }
 
   async function sendMessage() {
@@ -65,11 +87,11 @@
       var payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Request failed");
       sessionId = payload.session_id;
-      addMessage("assistant", payload.answer || payload.response || "No response available.");
+      addMessage("assistant", payload.answer);
       document.getElementById("source").textContent = payload.answer_type === "website"
-        ? "Based on customer website information"
+        ? "Based on indexed customer website information"
         : payload.answer_type === "general"
-          ? "General information"
+          ? "General information; not presented as customer-specific"
           : "";
     } catch (error) {
       addMessage("assistant", "Unable to process your request right now.");
@@ -87,7 +109,8 @@
   document.getElementById("close").addEventListener("click", function () {
     window.parent.postMessage({ type: "DYNAMIC_AI_CLOSE" }, "*");
   });
-  addMessage("assistant", "Hello! How can I help you today?");
+
+  loadConfig();
 })();
 </script>
 </body>
