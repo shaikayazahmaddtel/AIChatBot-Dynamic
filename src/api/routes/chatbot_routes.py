@@ -16,7 +16,6 @@ _engine_cache: Dict[str, ChatbotEngine] = {}
 
 
 def _effective_site_url(data: dict) -> str:
-    """Use the browser Origin as the tenant identity; body fallback is opt-in for development."""
     origin = request.headers.get("Origin")
     if origin and origin != "null":
         return origin
@@ -35,16 +34,27 @@ def _get_engine(client: dict) -> ChatbotEngine:
 
 
 def _warm_knowledge_base(client: dict) -> None:
-    """Build/load the tenant knowledge base without blocking widget initialization."""
     try:
         _get_engine(client)
     except Exception as exc:
         print(f"Knowledge-base warm-up failed for {client.get('client_id')}: {exc}")
 
 
+def _tenant_profile(client: dict) -> Dict:
+    name = client.get("name") or "AI Assistant"
+    industry = client.get("industry") or "general"
+    return {
+        "customerId": client.get("client_id"),
+        "name": name,
+        "industry": industry,
+        "domain": client.get("domain") or normalize_domain(client.get("website_url", "")),
+        "title": f"{name} Assistant",
+        "greeting": f"Welcome to {name}. How can I help you today?",
+    }
+
+
 @chatbot_bp.route("/widget/init", methods=["POST"])
 def initialize_widget():
-    """Validate customer/domain pairing and issue a short-lived widget token."""
     try:
         data = request.get_json(silent=True) or {}
         client_id = data.get("customerId") or data.get("client_id")
@@ -63,7 +73,6 @@ def initialize_widget():
         domain = normalize_domain(site_url)
         token = create_widget_token(client_id, domain)
 
-        # Start crawling/indexing on installation. Existing FAISS indexes load quickly.
         if client_id not in _engine_cache:
             threading.Thread(target=_warm_knowledge_base, args=(client,), daemon=True).start()
 
@@ -74,6 +83,7 @@ def initialize_widget():
             "token": token,
             "widgetUrl": "/widget",
             "knowledgeBase": "building_or_ready",
+            "profile": _tenant_profile(client),
         })
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 500
@@ -81,9 +91,22 @@ def initialize_widget():
         return jsonify({"error": "Unable to initialize chatbot widget"}), 500
 
 
+@chatbot_bp.route("/widget/config", methods=["GET"])
+@require_widget_token
+def widget_config():
+    """Return only tenant-safe UI configuration for the authenticated widget."""
+    claims = g.widget_claims
+    client_id = claims.get("sub")
+    client = tenant_resolver.client_manager.get_client(client_id)
+    if not client or client.get("status") != "active":
+        return jsonify({"error": "Customer is not available"}), 403
+    if not tenant_resolver.is_allowed_origin(client, claims.get("domain", "")):
+        return jsonify({"error": "Customer domain validation failed"}), 403
+    return jsonify(_tenant_profile(client))
+
+
 @chatbot_bp.route("/init", methods=["POST"])
 def initialize_chatbot():
-    """Backwards-compatible initialization endpoint for server-side clients."""
     data = request.get_json(silent=True) or {}
     client_id = data.get("client_id")
     website_url = data.get("website_url")
@@ -110,7 +133,6 @@ def initialize_chatbot():
 @chatbot_bp.route("/chat", methods=["POST"])
 @require_widget_token
 def chat():
-    """Process a visitor question using the tenant-specific RAG engine."""
     session_id = str(uuid.uuid4())
     try:
         data = request.get_json(silent=True) or {}
