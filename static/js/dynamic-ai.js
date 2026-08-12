@@ -2,35 +2,35 @@
 (function (window, document) {
   "use strict";
 
-  var DEFAULTS = {
-    apiBase: "https://chatbot.midget.jsscript",
-    title: "AI Assistant",
-    primaryColor: "#2563eb"
-  };
+  function getApiBase() {
+    var current = document.currentScript;
+    if (current && current.src) {
+      try { return new URL(current.src, window.location.href).origin; } catch (e) {}
+    }
+    return window.location.origin;
+  }
+
+  var DEFAULTS = { title: "AI Assistant", primaryColor: "#2563eb" };
 
   function DynamicAI() {
     this.config = null;
     this.iframe = null;
     this.button = null;
     this.token = null;
-    this.sessionId = null;
   }
 
   DynamicAI.prototype.init = function (options) {
     options = options || {};
-    if (!options.customerId) {
-      throw new Error("DynamicAI.init requires customerId");
-    }
-
-    this.config = Object.assign({}, DEFAULTS, options);
+    if (!options.customerId) throw new Error("DynamicAI.init requires customerId");
+    this.config = Object.assign({}, DEFAULTS, options, { apiBase: options.apiBase || getApiBase() });
     this.createButton();
     this.initializeWidgetToken();
+    this.bindWindowEvents();
     return this;
   };
 
   DynamicAI.prototype.createButton = function () {
     if (document.getElementById("dynamic-ai-launcher")) return;
-
     var self = this;
     var button = document.createElement("button");
     button.id = "dynamic-ai-launcher";
@@ -43,10 +43,7 @@
       "color:#fff", "font-size:25px", "cursor:pointer", "z-index:2147483646",
       "box-shadow:0 8px 24px rgba(0,0,0,.2)"
     ].join(";");
-
-    button.addEventListener("click", function () {
-      self.open();
-    });
+    button.addEventListener("click", function () { self.open(); });
     document.body.appendChild(button);
     this.button = button;
   };
@@ -55,35 +52,32 @@
     var self = this;
     fetch(this.config.apiBase + "/api/v1/chatbot/widget/init", {
       method: "POST",
+      mode: "cors",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customerId: this.config.customerId,
-        website_url: window.location.origin
-      })
+      body: JSON.stringify({ customerId: this.config.customerId })
     })
       .then(function (response) {
         if (!response.ok) throw new Error("Unable to initialize chatbot widget");
         return response.json();
       })
-      .then(function (payload) {
-        self.token = payload.token;
-      })
-      .catch(function (error) {
-        console.error("DynamicAI initialization failed:", error);
-      });
+      .then(function (payload) { self.token = payload.token; })
+      .catch(function (error) { console.error("DynamicAI initialization failed:", error); });
+  };
+
+  DynamicAI.prototype.bindWindowEvents = function () {
+    var self = this;
+    window.addEventListener("message", function (event) {
+      if (!self.iframe || event.source !== self.iframe.contentWindow) return;
+      if (event.data && event.data.type === "DYNAMIC_AI_CLOSE") self.close();
+    });
   };
 
   DynamicAI.prototype.open = function () {
-    if (this.iframe) {
-      this.iframe.style.display = "block";
-      return;
-    }
-
+    if (this.iframe) { this.iframe.style.display = "block"; return; }
     if (!this.token) {
       console.warn("DynamicAI is still initializing. Try again in a moment.");
       return;
     }
-
     var iframe = document.createElement("iframe");
     iframe.src = this.config.apiBase + "/widget?token=" + encodeURIComponent(this.token);
     iframe.title = this.config.title;
@@ -94,7 +88,6 @@
       "border:0", "border-radius:16px", "background:#fff", "z-index:2147483645",
       "box-shadow:0 16px 48px rgba(0,0,0,.25)"
     ].join(";");
-
     document.body.appendChild(iframe);
     this.iframe = iframe;
   };
