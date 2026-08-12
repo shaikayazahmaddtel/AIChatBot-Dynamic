@@ -1,4 +1,6 @@
 """Centralized, tenant-aware chatbot API routes."""
+import os
+import threading
 import uuid
 from typing import Dict
 
@@ -18,7 +20,7 @@ def _effective_site_url(data: dict) -> str:
     origin = request.headers.get("Origin")
     if origin and origin != "null":
         return origin
-    if __import__("os").getenv("WIDGET_INIT_ALLOW_BODY_URL", "false").lower() == "true":
+    if os.getenv("WIDGET_INIT_ALLOW_BODY_URL", "false").lower() == "true":
         return data.get("website_url", "")
     return ""
 
@@ -30,6 +32,14 @@ def _get_engine(client: dict) -> ChatbotEngine:
         engine = ChatbotEngine(client_id, client)
         _engine_cache[client_id] = engine
     return engine
+
+
+def _warm_knowledge_base(client: dict) -> None:
+    """Build/load the tenant knowledge base without blocking widget initialization."""
+    try:
+        _get_engine(client)
+    except Exception as exc:
+        print(f"Knowledge-base warm-up failed for {client.get('client_id')}: {exc}")
 
 
 @chatbot_bp.route("/widget/init", methods=["POST"])
@@ -53,12 +63,17 @@ def initialize_widget():
         domain = normalize_domain(site_url)
         token = create_widget_token(client_id, domain)
 
+        # Start crawling/indexing on installation. Existing FAISS indexes load quickly.
+        if client_id not in _engine_cache:
+            threading.Thread(target=_warm_knowledge_base, args=(client,), daemon=True).start()
+
         return jsonify({
             "status": "success",
             "customerId": client_id,
             "domain": domain,
             "token": token,
             "widgetUrl": "/widget",
+            "knowledgeBase": "building_or_ready",
         })
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 500
@@ -81,10 +96,14 @@ def initialize_chatbot():
     if not tenant_resolver.is_allowed_origin(client, website_url):
         return jsonify({"error": "Website does not match registered customer domain"}), 403
 
+    if client_id not in _engine_cache:
+        threading.Thread(target=_warm_knowledge_base, args=(client,), daemon=True).start()
+
     return jsonify({
         "status": "success",
         "message": f"Chatbot initialized for {website_url}",
         "client_id": client_id,
+        "knowledgeBase": "building_or_ready",
     })
 
 
