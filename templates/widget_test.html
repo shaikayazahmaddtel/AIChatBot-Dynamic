@@ -3,50 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatbot Widget Test</title>
-    <link rel="stylesheet" href="/static/css/chatbot-widget.css">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 50px;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .test-info {
-            background: #f0f0f0;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 30px;
-        }
-    </style>
+    <title>Dynamic AI Widget Test</title>
 </head>
 <body>
-    <h1>💬 Chatbot Widget Test Page</h1>
-    
-    <div class="test-info">
-        <h3>Test Instructions:</h3>
-        <ul>
-            <li>Click the chat button in the bottom-right corner</li>
-            <li>Type a message and press Enter or click Send</li>
-            <li>The chatbot will respond to your queries</li>
-        </ul>
-        <p><strong>Note:</strong> For full functionality, configure your OpenAI API key in the .env file</p>
-    </div>
-    
-    <h2>Sample Questions:</h2>
-    <ul>
-        <li>"What services do you offer?"</li>
-        <li>"How can I contact support?"</li>
-        <li>"Tell me about your pricing"</li>
-    </ul>
-    
-    <script src="/static/js/chatbot-widget.js" data-client-id="test-client"></script>
+    <main style="max-width:900px;margin:60px auto;font-family:Arial,sans-serif;padding:24px;">
+        <h1>Dynamic AI Widget Test</h1>
+        <p>This test page intentionally contains no customer-specific answers or static chatbot responses.</p>
+        <p>Provide a real registered customer ID through the query string to test the centralized tenant flow.</p>
+    </main>
+    <script src="/static/js/dynamic-ai.js"></script>
     <script>
-        // Initialize widget with custom config
-        new ChatbotWidget({
-            clientId: 'test-client',
-            apiEndpoint: '/api/v1/chatbot'
-        });
+    (function () {
+        var params = new URLSearchParams(window.location.search);
+        var customerId = params.get("customerId");
+        if (!customerId) return;
+        window.DynamicAI.init({ customerId: customerId });
+    })();
     </script>
 </body>
 </html>
